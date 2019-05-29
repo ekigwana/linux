@@ -82,9 +82,9 @@ enum {
 
 enum {
 	ADF4371_CH_RF8,
+	ADF4371_CH_RFAUX8,
 	ADF4371_CH_RF16,
-	ADF4371_CH_RF32,
-	ADF4371_CH_RFAUX8
+	ADF4371_CH_RF32
 };
 
 struct adf4371_pwrdown {
@@ -93,14 +93,14 @@ struct adf4371_pwrdown {
 };
 
 static const char * const adf4371_ch_names[] = {
-	"RF8x", "RF16x", "RF32x", "RFAUX8x"
+	"RF8x", "RFAUX8x", "RF16x", "RF32x"
 };
 
 static const struct adf4371_pwrdown adf4371_pwrdown_ch[4] = {
 	[ADF4371_CH_RF8] = { ADF4371_REG(0x25), 2 },
+	[ADF4371_CH_RFAUX8] = { ADF4371_REG(0x72), 3 },
 	[ADF4371_CH_RF16] = { ADF4371_REG(0x25), 3 },
 	[ADF4371_CH_RF32] = { ADF4371_REG(0x25), 4 },
-	[ADF4371_CH_RFAUX8] = { ADF4371_REG(0x72), 3 }
 };
 
 static const struct reg_sequence adf4371_reg_defaults[] = {
@@ -393,6 +393,7 @@ static ssize_t adf4371_write(struct iio_dev *indio_dev,
 
 	return ret ? ret : len;
 }
+
 #define _ADF4371_EXT_INFO(_name, _ident) { \
 		.name = _name, \
 		.read = adf4371_read, \
@@ -423,6 +424,7 @@ static const struct iio_chan_spec_ext_info adf4371_ext_info[] = {
 
 static const struct iio_chan_spec adf4371_chan[] = {
 	ADF4371_CHANNEL(ADF4371_CH_RF8),
+	ADF4371_CHANNEL(ADF4371_CH_RFAUX8),
 	ADF4371_CHANNEL(ADF4371_CH_RF16),
 	ADF4371_CHANNEL(ADF4371_CH_RF32),
 	ADF4371_CHANNEL(ADF4371_CH_RFAUX8),
@@ -513,6 +515,7 @@ static void adf4371_clk_disable(void *data)
 
 static int adf4371_probe(struct spi_device *spi)
 {
+	const struct spi_device_id *id = spi_get_device_id(spi);
 	struct iio_dev *indio_dev;
 	struct adf4371_state *st;
 	struct regmap *regmap;
@@ -535,7 +538,7 @@ static int adf4371_probe(struct spi_device *spi)
 	mutex_init(&st->lock);
 
 	indio_dev->dev.parent = &spi->dev;
-	indio_dev->name = spi_get_device_id(spi)->name;
+	indio_dev->name = id->name;
 	indio_dev->info = &adf4371_info;
 	indio_dev->modes = INDIO_DIRECT_MODE;
 	indio_dev->channels = adf4371_chan;
