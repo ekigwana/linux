@@ -153,8 +153,9 @@ static int frame_buffer_probe(struct platform_device *pdev)
 	/* Get reserved memory region from Device-tree */
 	np = of_parse_phandle(pdev->dev.of_node, "memory-region", 0);
 	if (!np) {
-		dev_err(&pdev->dev, "No %s specified\n", "memory-region");
-		return -ENODEV;
+		dev_info(&pdev->dev, "No %s specified\n", "memory-region");
+		/* If no memory region defined use index 0 from local reg */
+		np = pdev->dev.of_node;
 	}
 
 	ret = of_address_to_resource(np, 0, &frm_buff->video_ram_buf);
