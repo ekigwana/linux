@@ -33,6 +33,19 @@ properties:
       Must be "clkin"
     maxItems: 1
 
+  clock-output-names:
+    maxItems: 1
+
+  clock-scales:
+    description:
+      The Common Clock Framework max rate is limited by MAX of unsigned long.
+      For ADF4371/ADF4372 devices this is a deficiency. If specified, this
+      property allows arbitrary scales. The first element in the array should
+      be the multiplier and the second element should be the divider.
+    allOf:
+      - $ref: /schemas/types.yaml#/definitions/uint32-array
+      - minimum: 1
+
   adi,mute-till-lock-en:
     description:
       If this property is present, then the supply current to RF8P and RF8N
@@ -57,6 +70,7 @@ examples:
                 spi-max-frequency = <1000000>;
                 clocks = <&adf4371_clkin>;
                 clock-names = "clkin";
+                clock-scales = <1 100>;
         };
     };
 ...

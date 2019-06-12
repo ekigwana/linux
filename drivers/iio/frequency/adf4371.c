@@ -6,6 +6,8 @@
  */
 #include <linux/bitfield.h>
 #include <linux/clk.h>
+#include <linux/clk/clkscale.h>
+#include <linux/clk-provider.h>
 #include <linux/device.h>
 #include <linux/err.h>
 #include <linux/gcd.h>
@@ -149,6 +151,14 @@ static const struct regmap_config adf4371_regmap_config = {
 	.read_flag_mask = BIT(7),
 };
 
+struct adf4371_outputs {
+	struct clk_hw hw;
+	struct iio_dev *indio_dev;
+	struct clock_scale scale;
+};
+
+#define to_adf4371_outputs(_hw) container_of(_hw, struct adf4371_outputs, hw)
+
 struct adf4371_chip_info {
 	unsigned int num_channels;
 	const struct iio_chan_spec *channels;
@@ -158,6 +168,7 @@ struct adf4371_state {
 	struct spi_device *spi;
 	struct regmap *regmap;
 	struct clk *clkin;
+	struct adf4371_outputs outputs;
 	/*
 	 * Lock for accessing device registers. Some operations require
 	 * multiple consecutive R/W operations, during which the device
@@ -472,6 +483,43 @@ static const struct iio_info adf4371_info = {
 	.debugfs_reg_access = &adf4371_reg_access,
 };
 
+static long adf4371_clk_round_rate(struct clk_hw *hw, unsigned long rate,
+				   unsigned long *parent_rate)
+{
+	return rate;
+}
+
+static unsigned long adf4371_clk_recalc_rate(struct clk_hw *hw,
+					     unsigned long parent_rate)
+{
+	struct adf4371_outputs *out = to_adf4371_outputs(hw);
+	struct iio_dev *indio_dev = out->indio_dev;
+	struct adf4371_state *st = iio_priv(indio_dev);
+	unsigned long long rate;
+
+	rate = adf4371_pll_fract_n_get_rate(st, ADF4371_CH_RF8);
+
+	return to_ccf_scaled(rate, &st->outputs.scale);
+}
+
+static int adf4371_clk_set_rate(struct clk_hw *hw, unsigned long rate,
+				unsigned long parent_name)
+{
+	struct adf4371_outputs *out = to_adf4371_outputs(hw);
+	struct iio_dev *indio_dev = out->indio_dev;
+	struct adf4371_state *st = iio_priv(indio_dev);
+	unsigned long long scaled_rate;
+
+	scaled_rate = from_ccf_scaled(rate, &st->outputs.scale);
+	return adf4371_set_freq(st, scaled_rate, ADF4371_CH_RF8);
+}
+
+static const struct clk_ops adf4371_clk_ops = {
+	.set_rate = adf4371_clk_set_rate,
+	.recalc_rate = adf4371_clk_recalc_rate,
+	.round_rate = adf4371_clk_round_rate,
+};
+
 static int adf4371_setup(struct adf4371_state *st)
 {
 	unsigned int synth_timeout = 2, timeout = 1, vco_alc_timeout = 1;
@@ -547,6 +595,56 @@ static void adf4371_clk_disable(void *data)
 	clk_disable_unprepare(st->clkin);
 }
 
+static void adf4371_clk_del_provider(void *data)
+{
+	struct adf4371_state *st = data;
+
+	of_clk_del_provider(st->spi->dev.of_node);
+}
+
+static int adf4371_clk_register(struct iio_dev *indio_dev)
+{
+	struct adf4371_state *st = iio_priv(indio_dev);
+	struct device_node *of_node = st->spi->dev.of_node;
+	struct clk_init_data init;
+	struct clk *clk_out;
+	const char *parent_name, *clk_name;
+	int ret;
+
+	parent_name = of_clk_get_parent_name(of_node, 0);
+	if (!parent_name)
+		return -EINVAL;
+
+	ret = of_clk_get_scale(st->spi->dev.of_node, NULL, &st->outputs.scale);
+	if (ret < 0) {
+		st->outputs.scale.mult = 1;
+		st->outputs.scale.div = 100;
+	}
+
+	clk_name = st->spi->dev.of_node->name;
+	device_property_read_string(&st->spi->dev,
+				    "clock-output-names", &clk_name);
+	init.name = clk_name;
+	init.ops = &adf4371_clk_ops;
+	init.parent_names = &parent_name;
+	init.num_parents = 1;
+
+	st->outputs.hw.init = &init;
+	st->outputs.indio_dev = indio_dev;
+
+	clk_out = devm_clk_register(&st->spi->dev, &st->outputs.hw);
+	if (IS_ERR(clk_out))
+		return PTR_ERR(clk_out);
+
+	ret = of_clk_add_provider(st->spi->dev.of_node,
+				  of_clk_src_simple_get, clk_out);
+	if (ret < 0)
+		return ret;
+
+	return devm_add_action_or_reset(&st->spi->dev,
+					adf4371_clk_del_provider, st);
+}
+
 static int adf4371_probe(struct spi_device *spi)
 {
 	const struct spi_device_id *id = spi_get_device_id(spi);
@@ -597,6 +695,12 @@ static int adf4371_probe(struct spi_device *spi)
 	ret = adf4371_setup(st);
 	if (ret < 0) {
 		dev_err(&spi->dev, "ADF4371 setup failed\n");
+		return ret;
+	}
+
+	ret = adf4371_clk_register(indio_dev);
+	if (ret < 0) {
+		dev_err(&spi->dev, "Clock provider register failed\n");
 		return ret;
 	}
 
