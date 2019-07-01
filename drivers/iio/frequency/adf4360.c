@@ -177,7 +177,10 @@ struct adf4360_state {
 	unsigned int pfd_freq;
 	unsigned int cpi;
 	bool pdp;
+	bool power_up;
 	const char *clk_out_name;
+	unsigned int regs[ADF5355_REG_NUM];
+	unsigned int regs_hw[ADF5355_REG_NUM];
 	u8 spi_data[3] ____cacheline_aligned;
 };
 
@@ -235,6 +238,31 @@ static int adf4360_write_reg(struct adf4360_state *st, unsigned int reg,
 	st->spi_data[2] = val & 0xff;
 
 	return spi_write(st->spi, st->spi_data, ARRAY_SIZE(st->spi_data));
+}
+
+static int adf4360_sync_config(struct adf4360_state *st, bool sync_all)
+{
+	int reg[] = { ADF4360_RDIV, ADF4360_CTRL, ADF4360_NDIV };
+	bool sync;
+	int ret, i = 0;
+
+	for (i = 0; i < ARRAY_SIZE(st->regs); ++i) {
+		sync = st->regs_hw[reg[i]] != st->regs[reg[i]];
+		if (sync || sync_all || st->power_up) {
+			if ((reg[i] == ADF4360_NDIV) && st->power_up) {
+				st->power_up = false;
+				usleep_range(15000, 20000);
+			}
+
+			ret = adf4360_write_reg(st, reg[i], st->regs[reg[i]]);
+			if (ret)
+				return ret;
+
+			st->regs_hw[reg[i]] = st->regs[reg[i]];
+		}
+	}
+
+	return 0;
 }
 
 /* fVCO = B * fREFIN / R */
@@ -347,6 +375,7 @@ static int adf4360_set_freq(struct adf4360_state *st, unsigned long rate)
 	unsigned int val_r, val_n, val_ctrl;
 	unsigned int pfd_freq;
 	unsigned long r, n;
+	int ret;
 
 	if (!st->clkin_freq || (st->clkin_freq > ADF4360_MAX_REFIN_RATE) ||
 		(rate < st->vco_min) || (rate > st->vco_max))
@@ -400,10 +429,13 @@ static int adf4360_set_freq(struct adf4360_state *st, unsigned long rate)
 		ADF4360_ABP(ADF4360_ABP_3_0NS) |
 		ADF4360_BSC(ADF4360_BSC_8);
 
-	adf4360_write_reg(st, ADF4360_REG(ADF4360_RDIV), val_r);
-	adf4360_write_reg(st, ADF4360_REG(ADF4360_CTRL), val_ctrl);
-	usleep_range(15000, 20000);
-	adf4360_write_reg(st, ADF4360_REG(ADF4360_NDIV), val_n);
+	st->regs[ADF4360_REG(ADF4360_RDIV)] = val_r;
+	st->regs[ADF4360_REG(ADF4360_CTRL)] = val_ctrl;
+	st->regs[ADF4360_REG(ADF4360_NDIV)] = val_n;
+
+	ret = adf4360_sync_config(st, false);
+	if (ret)
+		return ret;
 
 	st->freq_req = rate;
 	st->n = n;
@@ -458,10 +490,11 @@ static void adf4360_m2k_setup(struct adf4360_state *st)
 	val_r = ADF4360_R_COUNTER(st->r) | ADF4360_BSC(ADF4360_BSC_8);
 	val_b = ADF4360_A_COUNTER(2) | ADF4360_B_COUNTER(st->n);
 
-	adf4360_write_reg(st, ADF4360_REG(ADF4360_RDIV), val_r);
-	adf4360_write_reg(st, ADF4360_REG(ADF4360_CTRL), val_ctrl);
-	msleep(15);
-	adf4360_write_reg(st, ADF4360_REG(ADF4360_NDIV), val_b);
+	st->regs[ADF4360_REG(ADF4360_RDIV)] = val_r;
+	st->regs[ADF4360_REG(ADF4360_CTRL)] = val_ctrl;
+	st->regs[ADF4360_REG(ADF4360_NDIV)] = val_b;
+
+	adf4360_sync_config(st, false);
 }
 
 static int adf4360_read(struct iio_dev *indio_dev,
@@ -750,6 +783,7 @@ static int adf4360_probe(struct spi_device *spi)
 	st->spi = spi;
 	st->info = &adf4360_chip_info_tbl[id->driver_data];
 	st->part_id = id->driver_data;
+	st->power_up = true;
 
 	ret = adf4360_parse_dt(st);
 	if (ret) {
