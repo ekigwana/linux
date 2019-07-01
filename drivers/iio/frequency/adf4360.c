@@ -622,9 +622,30 @@ static int adf4360_write_raw(struct iio_dev *indio_dev,
 	return ret;
 }
 
+static int adf4360_reg_access(struct iio_dev *indio_dev,
+			      unsigned int reg,
+			      unsigned int writeval,
+			      unsigned int *readval)
+{
+	struct adf4360_state *st = iio_priv(indio_dev);
+	int ret = 0;
+
+	if (readval) {
+		*readval = st->regs_hw[reg];
+	} else {
+		mutex_lock(&st->lock);
+		st->regs[reg] = writeval & 0xFFFFFC;
+		ret = adf4360_sync_config(st, false);
+		mutex_unlock(&st->lock);
+	}
+
+	return ret;
+}
+
 static const struct iio_info adf4360_iio_info = {
 	.read_raw = &adf4360_read_raw,
 	.write_raw = &adf4360_write_raw,
+	.debugfs_reg_access = &adf4360_reg_access,
 	.driver_module = THIS_MODULE,
 };
 
