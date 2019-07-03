@@ -56,6 +56,18 @@ Optional properties:
     inverting filter.
 - adi,power-up-frequency-hz: If set in Hz, the PLL tunes to the desired
     frequency on probe.
+- adi,muxout-control: Sets on-chip multiplexer as follows (default 1):
+    0, Three-state output.
+    1, Digital lock detect (active high).
+    2, N divider output.
+    3, DVDD.
+    4, R divider output.
+    5, N-channel open-drain lock detect.
+    6, Serial data output.
+    7, DGND.
+- adi,muxout-gpios: MUX out GPIO - If set with a valid phandle and GPIO number,
+    pll lock state is tested on read if adi,muxout-control is set to lock
+    detect.
 
 Required properties for ADF4360-7, ADF4360-8 and ADF4360-9:
   ADF4360-7 to ADF4360-9 have a VCO that is tuned to a specific frequency range
